@@ -1,0 +1,234 @@
+#!/usr/bin/env python2.7
+# coding: utf-8
+
+# 对于不同尺寸，分别做：
+# 加上无台标样本
+# 减去周边一部分
+# 四块取HOG
+# SVM
+
+
+import cv2
+import numpy as np
+
+import sys
+import os
+import random
+import math
+
+import datetime
+
+bin_n = 16 # Number of bins
+
+
+
+def readDir(filePath):
+    fileNames = []
+    if os.path.isdir(filePath):
+        for f in os.listdir(filePath):
+            newFilePath = os.path.join(filePath, f)
+            if os.path.isdir(newFilePath):
+                fileNames.extend(readDir(newFilePath))
+            elif os.path.splitext(f)[-1] == '.JPG' or os.path.splitext(f)[-1] == '.jpg':
+                fileNames.append(newFilePath)
+        return fileNames
+    else:
+        return filePath
+
+
+
+def readDirWithTargetShape(filePath, targetShape):
+    fileNames = []
+    if os.path.isdir(filePath):
+        for f in os.listdir(filePath):
+            newFilePath = os.path.join(filePath, f)
+            if os.path.isdir(newFilePath):
+                fileNames.extend(readDir(newFilePath))
+            elif os.path.splitext(f)[-1] == '.JPG' or os.path.splitext(f)[-1] == '.jpg':
+                img = cv2.imread(newFilePath,0)
+                if img.shape == targetShape:
+                  fileNames.append(newFilePath)
+        return fileNames
+    else:
+        return filePath
+
+
+
+# given dirPath, find all dirs in it that includes jpg files
+def getLogoDirs(dirPath):
+
+    logoDirs = []
+
+    if os.path.isdir(dirPath):
+      # check whether contains image
+      dirName = os.path.basename(dirPath)
+
+      if dirName == 'correct' or dirName == '正确' or dirName == '无台标':
+        for f in os.listdir(dirPath):
+          if os.path.splitext(f)[-1] == '.JPG' or os.path.splitext(f)[-1] == '.jpg':
+            logoDirs.append(dirPath)
+            break
+
+      # iterate for dirs included
+      for f in os.listdir(dirPath):
+        newPath = os.path.join(dirPath, f)
+        if os.path.isdir(newPath):
+          logoDirs.extend(getLogoDirs(newPath))
+
+      return logoDirs
+
+    else:
+      return []
+
+
+
+
+
+def cut(img, width_percent, height_percent):
+  height = img.shape[0]
+  width = img.shape[1]
+  width_cut = int(width*width_percent)
+  height_cut = int(height*height_percent)
+  cut_img = img[height_cut:(height-height_cut), width_cut:(width-width_cut)]
+  return cut_img
+
+
+
+
+
+def show_cut_img(img_name):
+  img = cv2.imread(img_name, 0)
+
+  cut_img = cut(img)
+
+  cv2.imshow('cut image', cut_img)
+  cv2.waitKey(0)
+  cv2.destroyAllWindows()
+
+  return cut_img
+
+
+
+def hog(img):
+  h, w = img.shape
+
+  gx = cv2.Sobel(img, cv2.CV_32F, 1, 0)
+  gy = cv2.Sobel(img, cv2.CV_32F, 0, 1)
+
+  mag, ang = cv2.cartToPolar(gx, gy)
+  bins = np.int32(bin_n*ang/(2*np.pi))    # quantizing binvalues in (0...16)
+  bin_cells = bins[:h/2,:w/2], bins[h/2:,:w/2], bins[:h/2,w/2:], bins[h/2:,w/2:]
+  mag_cells = mag[:h/2,:w/2], mag[h/2:,:w/2], mag[:h/2,w/2:], mag[h/2:,w/2:]
+  hists = [np.bincount(b.ravel(), m.ravel(), bin_n) for b, m in zip(bin_cells, mag_cells)]
+  hist = np.hstack(hists)     # hist is a 64 bit vector
+  return hist
+
+
+# tvName
+tvNames = ['CCTV-1', 'CCTV-10', 'CCTV-11', 'CCTV-13', 'CCTV-14', 'CCTV-15', 'CCTV-2', 'CCTV-3', 'CCTV-5', 'CCTV-6', 'CCTV-8', 'CCTV-9', '\xe4\xb8\x9c\xe6\x96\xb9\xe5\x8d\xab\xe8\xa7\x86', '\xe4\xba\x91\xe5\x8d\x97\xe5\x8d\xab\xe8\xa7\x86', '\xe5\x86\x85\xe8\x92\x99\xe5\x8f\xa4\xe5\x8d\xab\xe8\xa7\x86', '\xe5\x8c\x97\xe4\xba\xac\xe5\x8d\xab\xe8\xa7\x86', '\xe5\x90\x89\xe6\x9e\x97\xe5\x8d\xab\xe8\xa7\x86', '\xe5\x9b\x9b\xe5\xb7\x9d\xe5\x8d\xab\xe8\xa7\x86', '\xe5\xa4\xa9\xe6\xb4\xa5\xe5\x8d\xab\xe8\xa7\x86', '\xe5\xae\x81\xe5\xa4\x8f\xe5\x8d\xab\xe8\xa7\x86', '\xe5\xae\x89\xe5\xbe\xbd\xe5\x8d\xab\xe8\xa7\x86', '\xe5\xb1\xb1\xe4\xb8\x9c\xe5\x8d\xab\xe8\xa7\x86', '\xe5\xb1\xb1\xe8\xa5\xbf\xe5\x8d\xab\xe8\xa7\x86', '\xe5\xb9\xbf\xe4\xb8\x9c\xe5\x8d\xab\xe8\xa7\x86', '\xe5\xb9\xbf\xe8\xa5\xbf\xe5\x8d\xab\xe8\xa7\x86', '\xe6\x96\xb0\xe7\x96\x86\xe5\x85\xb5\xe5\x9b\xa2\xe5\x8d\xab\xe8\xa7\x86', '\xe6\x96\xb0\xe7\x96\x86\xe5\x8d\xab\xe8\xa7\x86', '\xe6\x97\xa0\xe5\x8f\xb0\xe6\xa0\x87', '\xe6\xb1\x9f\xe8\x8b\x8f\xe5\x8d\xab\xe8\xa7\x86', '\xe6\xb1\x9f\xe8\xa5\xbf\xe5\x8d\xab\xe8\xa7\x86', '\xe6\xb2\xb3\xe5\x8c\x97\xe5\x8d\xab\xe8\xa7\x86', '\xe6\xb5\x99\xe6\xb1\x9f\xe5\x8d\xab\xe8\xa7\x86', '\xe6\xb7\xb1\xe5\x9c\xb3\xe5\x8d\xab\xe8\xa7\x86', '\xe6\xb9\x96\xe5\x8c\x97\xe5\x8d\xab\xe8\xa7\x86', '\xe6\xb9\x96\xe5\x8d\x97\xe5\x8d\xab\xe8\xa7\x86', '\xe8\xa5\xbf\xe8\x97\x8f\xe5\x8d\xab\xe8\xa7\x86', '\xe8\xb4\xb5\xe5\xb7\x9e\xe5\x8d\xab\xe8\xa7\x86', '\xe8\xbe\xbd\xe5\xae\x81\xe5\x8d\xab\xe8\xa7\x86', '\xe9\x87\x91\xe9\xb9\xb0\xe5\x8d\xa1\xe9\x80\x9a', '\xe9\x99\x95\xe8\xa5\xbf\xe5\x8d\xab\xe8\xa7\x86', '\xe9\x9d\x92\xe6\xb5\xb7\xe5\x8d\xab\xe8\xa7\x86', '\xe9\xbb\x91\xe9\xbe\x99\xe6\xb1\x9f\xe5\x8d\xab\xe8\xa7\x86']
+
+cctv_labels = range(12)
+
+for i, tvName in enumerate(tvNames):
+  print i, tvName
+
+# load shapes with one tv
+shapesWithOneTv_shape_i = {(69, 126): 27, (127, 294): 27, (98, 102): 27, (91, 238): 27, (98, 240): 27, (95, 260): 27, (111, 158): 9, (106, 186): 7, (71, 120): 27, (106, 268): 27, (76, 184): 27, (119, 308): 27, (88, 238): 27, (66, 214): 27, (117, 202): 0, (93, 184): 27, (118, 358): 27, (95, 180): 27, (83, 170): 27, (95, 352): 27, (68, 158): 27, (56, 180): 27, (123, 224): 27, (75, 202): 27, (53, 98): 27, (80, 202): 27, (98, 210): 27, (103, 184): 27, (108, 358): 27, (92, 168): 27, (49, 98): 27, (84, 170): 27, (145, 536): 27, (62, 202): 27, (129, 358): 27, (75, 238): 27, (80, 174): 27, (79, 238): 27, (112, 268): 27, (71, 180): 27, (72, 238): 27, (107, 202): 27, (52, 180): 27, (49, 134): 27, (140, 352): 27, (81, 202): 27, (98, 232): 27, (135, 358): 27, (54, 134): 27, (213, 514): 27, (64, 134): 27, (98, 170): 27, (109, 358): 27, (87, 160): 27, (56, 98): 27, (103, 196): 27, (72, 156): 27, (91, 232): 27, (113, 358): 27, (156, 536): 27, (85, 286): 27, (88, 160): 27, (67, 214): 27, (138, 358): 27, (66, 180): 27, (111, 330): 27, (204, 536): 27, (45, 134): 27, (74, 238): 27, (57, 142): 27, (60, 142): 27, (109, 286): 27, (94, 358): 27, (79, 286): 27, (95, 326): 27, (72, 160): 27, (92, 224): 27, (26, 90): 27, (102, 188): 12, (111, 286): 27, (75, 186): 27, (72, 170): 27, (61, 142): 27, (56, 184): 27, (95, 308): 27, (82, 222): 27, (115, 308): 27, (59, 98): 27, (140, 264): 27, (144, 368): 27, (103, 352): 27, (120, 306): 27, (49, 132): 27, (118, 196): 27, (95, 272): 27, (133, 358): 27, (70, 126): 27, (157, 286): 27, (85, 164): 27, (88, 184): 27, (100, 184): 27, (66, 120): 27, (51, 170): 27, (98, 186): 27, (75, 134): 27, (163, 536): 27, (68, 164): 27, (58, 148): 27, (97, 268): 27, (101, 358): 27, (62, 112): 27, (116, 308): 27, (68, 206): 27, (105, 348): 27, (89, 160): 27, (85, 170): 27, (97, 380): 27, (108, 202): 27, (105, 358): 27, (61, 112): 27, (213, 532): 12, (92, 286): 27, (123, 238): 27, (74, 202): 27, (95, 206): 27, (134, 358): 27, (72, 138): 27, (69, 206): 27, (100, 268): 27, (37, 90): 27, (102, 536): 27, (103, 362): 27, (80, 286): 27, (65, 134): 27, (102, 358): 27, (98, 206): 27, (41, 134): 27, (66, 68): 27, (95, 298): 27, (88, 180): 27, (157, 358): 27, (72, 174): 27, (106, 286): 27, (105, 180): 27, (66, 134): 27, (66, 126): 27, (51, 164): 27, (85, 180): 27, (187, 358): 27, (66, 160): 27, (64, 202): 27, (93, 170): 27, (68, 130): 27, (79, 142): 27, (40, 52): 27, (92, 358): 27, (93, 134): 27, (65, 120): 27, (66, 156): 27, (212, 536): 27, (79, 180): 27, (100, 168): 27, (79, 134): 27, (95, 314): 27, (88, 164): 27, (98, 224): 27, (59, 106): 27, (176, 448): 27, (95, 330): 27, (68, 210): 27, (63, 180): 27, (83, 202): 27, (98, 164): 27, (40, 90): 27, (63, 202): 27, (98, 218): 27, (57, 180): 27, (184, 358): 27, (48, 180): 27, (215, 392): 27, (123, 358): 27, (142, 344): 27, (177, 536): 27, (75, 180): 27, (140, 266): 27, (98, 184): 27, (109, 340): 27, (122, 358): 27, (66, 158): 27, (69, 202): 27, (164, 358): 27, (197, 358): 27, (103, 358): 27, (78, 184): 27, (72, 148): 27, (102, 180): 27, (140, 260): 27, (157, 536): 27, (74, 186): 27, (95, 340): 27, (140, 202): 27, (95, 254): 27, (106, 348): 27, (107, 358): 27, (102, 362): 27, (205, 536): 27, (82, 152): 27, (215, 470): 27, (106, 358): 27, (55, 158): 27, (221, 448): 27, (117, 318): 27, (98, 192): 27, (67, 126): 27, (117, 358): 27, (136, 358): 27, (49, 112): 27, (84, 164): 27, (143, 268): 27, (100, 358): 27, (107, 286): 27, (77, 142): 27, (80, 160): 27, (103, 228): 27, (98, 214): 27, (67, 134): 27, (124, 298): 27, (44, 60): 27, (99, 202): 27, (79, 186): 27, (118, 318): 27, (44, 80): 27, (59, 148): 27, (87, 202): 27, (92, 202): 27, (64, 138): 27, (212, 532): 27, (95, 240): 27, (183, 514): 27, (75, 192): 27, (85, 196): 27, (58, 142): 27, (159, 536): 27, (108, 286): 27, (68, 112): 27, (164, 536): 27, (93, 238): 27, (76, 202): 27, (190, 536): 27, (197, 520): 34, (189, 358): 27, (118, 308): 27, (189, 476): 27, (54, 98): 27, (102, 352): 27, (79, 130): 27, (46, 94): 27, (95, 164): 27, (90, 160): 27, (83, 186): 27, (91, 202): 27, (95, 336): 27, (76, 134): 27, (62, 214): 27, (76, 186): 27, (106, 344): 27, (66, 118): 27, (49, 90): 27, (80, 186): 27, (44, 106): 27, (210, 358): 27, (68, 180): 27, (124, 358): 27, (28, 90): 27, (148, 358): 27}
+
+shapesWithOneCCTV_shape_i = {(157, 380): 0, (110, 286): 9, (103, 268): 0, (111, 158): 9, (134, 286): 0, (93, 182): 4, (111, 200): 5, (106, 186): 7, (117, 202): 0, (120, 308): 0, (95, 238): 4, (218, 402): 7}
+
+
+# load and use
+
+
+def loadSvm(svm_dir):
+  shape_svm = {}
+
+  for svm_file in os.listdir(svm_dir):
+    if os.path.splitext(svm_file)[-1] == '.xml':
+      print 'loading ', svm_file
+      svm = cv2.SVM()
+      svm.load(svm_dir+svm_file)
+
+      svm_h_w = svm_file.split('.')[0]
+      h = int(svm_h_w.split('_')[1])
+      w = int(svm_h_w.split('_')[2])
+
+      shape = (h, w)
+      shape_svm[shape] = svm
+  return shape_svm
+
+
+svm_all_dir = './3_4_svms/'
+all_shape_svm = loadSvm(svm_all_dir)
+
+svm_cctv_dir = './3_5_svms/'
+cctv_shape_svm = loadSvm(svm_cctv_dir)
+
+
+
+
+testImageDir = './test_images'
+
+testImages = readDir(testImageDir)
+
+random.shuffle(testImages)
+
+all_width_percent = 0.05
+all_height_percent = 0.1
+
+cctv_width_percent = 0.3
+cctv_height_percent = 0.2
+
+
+for imagePath in testImages:
+
+    #print datetime.datetime.now(), 'start'
+    img_original = cv2.imread(imagePath, 0)
+
+    shape = img_original.shape
+
+    predicted_label = 0
+
+    if shape in shapesWithOneTv_shape_i.keys():
+      predicted_label = shapesWithOneTv_shape_i[shape]
+      #print 'shape with one tv'
+
+    else:
+      img = cut(img_original, all_width_percent, all_height_percent)
+      hist = hog(img)
+      hist = np.float32(hist)
+
+      predicted_label = int(all_shape_svm[shape].predict(hist))
+
+    # cctv 
+    if predicted_label in cctv_labels:
+      if shape in shapesWithOneCCTV_shape_i.keys():
+        predicted_label = shapesWithOneCCTV_shape_i[shape]
+      else:
+        img = cut(img_original, cctv_width_percent, cctv_height_percent)
+        hist = hog(img)
+        hist = np.float32(hist)
+
+        predicted_label = int(cctv_shape_svm[shape].predict(hist))
+
+    predicted_tvName = tvNames[predicted_label]
+
+    print 'predicted tv: ', predicted_tvName
+
+    #print datetime.datetime.now(), 'end'
+
+    img_color = cv2.imread(imagePath, 1)
+    cv2.imshow('image', img_color)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+
+
+
+
+
+
+
+
+
